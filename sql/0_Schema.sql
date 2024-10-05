@@ -20,6 +20,14 @@ CREATE TABLE `isu_condition` (
   `jia_isu_uuid` CHAR(36) NOT NULL,
   `timestamp` DATETIME NOT NULL,
   `is_sitting` TINYINT(1) NOT NULL,
+  `condition_level` VARCHAR(20) AS (
+    CASE
+      WHEN (LENGTH(`condition`) - LENGTH(REPLACE(`condition`, '=true', ''))) / LENGTH('=true') = 0 THEN 'Info'
+      WHEN (LENGTH(`condition`) - LENGTH(REPLACE(`condition`, '=true', ''))) / LENGTH('=true') IN (1, 2) THEN 'Warning'
+      WHEN (LENGTH(`condition`) - LENGTH(REPLACE(`condition`, '=true', ''))) / LENGTH('=true') = 3 THEN 'Critical'
+      ELSE 'Error'
+    END
+  ) STORED invisible,
   `condition` VARCHAR(255) NOT NULL,
   `message` VARCHAR(255) NOT NULL,
   `created_at` DATETIME(6) DEFAULT CURRENT_TIMESTAMP(6),

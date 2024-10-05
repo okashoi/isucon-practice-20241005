@@ -822,8 +822,8 @@ func generateIsuGraphResponse(tx *sqlx.Tx, jiaIsuUUID string, graphDate time.Tim
 	timestampsInThisHour := []int64{}
 	var startTimeInThisHour time.Time
 	var condition IsuCondition
-
-	rows, err := tx.Queryx("SELECT * FROM `isu_condition` WHERE `jia_isu_uuid` = ? ORDER BY `timestamp` ASC", jiaIsuUUID)
+	endTime := graphDate.Add(time.Hour * 24)
+	rows, err := tx.Queryx("SELECT * FROM `isu_condition` WHERE `jia_isu_uuid` = ? AND ? <= `timestamp` AND `timestamp` < ? ORDER BY `timestamp` ASC", jiaIsuUUID, graphDate, endTime)
 	if err != nil {
 		return nil, fmt.Errorf("db error: %v", err)
 	}
@@ -872,7 +872,6 @@ func generateIsuGraphResponse(tx *sqlx.Tx, jiaIsuUUID string, graphDate time.Tim
 				ConditionTimestamps: timestampsInThisHour})
 	}
 
-	endTime := graphDate.Add(time.Hour * 24)
 	startIndex := len(dataPoints)
 	endNextIndex := len(dataPoints)
 	for i, graph := range dataPoints {
@@ -1044,38 +1043,57 @@ func getIsuConditions(c echo.Context) error {
 }
 
 // ISUのコンディションをDBから取得
+// ISUのコンディションをDBから取得
 func getIsuConditionsFromDB(db *sqlx.DB, jiaIsuUUID string, endTime time.Time, conditionLevel map[string]interface{}, startTime time.Time,
 	limit int, isuName string) ([]*GetIsuConditionResponse, error) {
 
 	conditions := []IsuCondition{}
 	var err error
 
-	if startTime.IsZero() {
-		err = db.Select(&conditions,
-			"SELECT * FROM `isu_condition` WHERE `jia_isu_uuid` = ?"+
-				"	AND `timestamp` < ?"+
-				"	ORDER BY `timestamp` DESC",
-			jiaIsuUUID, endTime,
-		)
-	} else {
-		err = db.Select(&conditions,
-			"SELECT * FROM `isu_condition` WHERE `jia_isu_uuid` = ?"+
-				"	AND `timestamp` < ?"+
-				"	AND ? <= `timestamp`"+
-				"	ORDER BY `timestamp` DESC",
-			jiaIsuUUID, endTime, startTime,
-		)
+	// conditionLevelのキーをスライスとして抽出
+	levels := []string{}
+	for level := range conditionLevel {
+		levels = append(levels, level)
 	}
+
+	// ベースのクエリ
+	query := `
+		SELECT * FROM isu_condition 
+		WHERE jia_isu_uuid = ?
+		AND timestamp < ?
+		AND condition_level IN (?)
+	`
+	args := []interface{}{jiaIsuUUID, endTime, levels}
+
+	// startTime が存在する場合にクエリを修正
+	if !startTime.IsZero() {
+		query += " AND ? <= timestamp"
+		args = append(args, startTime)
+	}
+
+	// クエリの最後に ORDER BY と LIMIT を追加
+	query += " ORDER BY timestamp DESC LIMIT ?"
+	args = append(args, limit)
+
+	// sqlx.In を使用して IN 句を正しく処理
+	query, args, err = sqlx.In(query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("failed to build query: %v", err)
+	}
+
+	// プレースホルダの置き換え
+	query = db.Rebind(query)
+
+	// クエリの実行
+	err = db.Select(&conditions, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("db error: %v", err)
 	}
 
+	// 結果を構築
 	conditionsResponse := []*GetIsuConditionResponse{}
 	i := 0
 	for _, c := range conditions {
-		if i >= limit {
-			break
-		}
 		cLevel, err := calculateConditionLevel(c.Condition)
 		if err != nil {
 			continue
