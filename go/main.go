@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"crypto/ecdsa"
+	"crypto/sha1"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -754,7 +755,14 @@ func getIsuIcon(c echo.Context) error {
 		c.Logger().Errorf("db error: %v", err)
 		return c.NoContent(http.StatusInternalServerError)
 	}
-
+	// ETagの生成（画像データを使ってETagを生成する）
+	etag := fmt.Sprintf("%x", sha1.Sum(image))
+	clientETag := c.Request().Header.Get("If-None-Match")
+	if clientETag == etag {
+		// クライアントのETagと一致する場合、304を返す
+		return c.NoContent(http.StatusNotModified)
+	}
+	c.Response().Header().Set("ETag", etag)
 	return c.Blob(http.StatusOK, "", image)
 }
 
