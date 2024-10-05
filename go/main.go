@@ -16,6 +16,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/dgrijalva/jwt-go"
@@ -49,6 +50,7 @@ var (
 	db                  *sqlx.DB
 	sessionStore        sessions.Store
 	mySQLConnectionData *MySQLConnectionEnv
+	trendResponseCache  sync.Map
 
 	jiaJWTSigningKey *ecdsa.PublicKey
 
@@ -209,6 +211,37 @@ func init() {
 	}
 }
 
+type trendResponseCacheValue struct {
+	exp int64
+	res []TrendResponse
+}
+
+func initTrendResponseCache() {
+	trendResponseCache = sync.Map{}
+}
+
+func setTrendResponseCache(res []TrendResponse) {
+	exp := time.Now().UnixMilli() + 500
+	v := trendResponseCacheValue{
+		exp: exp,
+		res: res,
+	}
+	trendResponseCache.Store("a", v)
+}
+
+func getTrendResponseCache() ([]TrendResponse, bool) {
+	vraw, ok := trendResponseCache.Load("a")
+	if !ok {
+		return []TrendResponse{}, false
+	}
+	v := vraw.(trendResponseCacheValue)
+	if v.exp < time.Now().UnixMilli() {
+		return []TrendResponse{}, false
+	}
+
+	return v.res, true
+}
+
 func main() {
 	http.DefaultServeMux.Handle("/debug/fgprof", fgprof.Handler())
 	go func() {
@@ -260,6 +293,8 @@ func main() {
 		e.Logger.Fatalf("missing: POST_ISUCONDITION_TARGET_BASE_URL")
 		return
 	}
+
+	initTrendResponseCache()
 
 	serverPort := fmt.Sprintf(":%v", getEnv("SERVER_APP_PORT", "3000"))
 	e.Logger.Fatal(e.Start(serverPort))
@@ -1085,6 +1120,11 @@ func calculateConditionLevel(condition string) (string, error) {
 // GET /api/trend
 // ISUの性格毎の最新のコンディション情報
 func getTrend(c echo.Context) error {
+	cache, ok := getTrendResponseCache()
+	if ok {
+		return c.JSON(http.StatusOK, cache)
+	}
+
 	characterList := []Isu{}
 	err := db.Select(&characterList, "SELECT `character` FROM `isu` GROUP BY `character`")
 	if err != nil {
@@ -1159,6 +1199,8 @@ func getTrend(c echo.Context) error {
 				Critical:  characterCriticalIsuConditions,
 			})
 	}
+
+	setTrendResponseCache(res)
 
 	return c.JSON(http.StatusOK, res)
 }
