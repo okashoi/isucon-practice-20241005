@@ -1186,15 +1186,8 @@ func postIsuCondition(c echo.Context) error {
 		return c.String(http.StatusBadRequest, "bad request body")
 	}
 
-	tx, err := db.Beginx()
-	if err != nil {
-		c.Logger().Errorf("db error: %v", err)
-		return c.NoContent(http.StatusInternalServerError)
-	}
-	defer tx.Rollback()
-
 	var count int
-	err = tx.Get(&count, "SELECT COUNT(*) FROM `isu` WHERE `jia_isu_uuid` = ?", jiaIsuUUID)
+	err = db.Get(&count, "SELECT COUNT(*) FROM `isu` WHERE `jia_isu_uuid` = ?", jiaIsuUUID)
 	if err != nil {
 		c.Logger().Errorf("db error: %v", err)
 		return c.NoContent(http.StatusInternalServerError)
@@ -1204,29 +1197,40 @@ func postIsuCondition(c echo.Context) error {
 	}
 
 	for _, cond := range req {
-		timestamp := time.Unix(cond.Timestamp, 0)
-
 		if !isValidConditionFormat(cond.Condition) {
 			return c.String(http.StatusBadRequest, "bad request body")
 		}
+	}
 
-		_, err = tx.Exec(
-			"INSERT INTO `isu_condition`"+
-				"	(`jia_isu_uuid`, `timestamp`, `is_sitting`, `condition`, `message`)"+
-				"	VALUES (?, ?, ?, ?, ?)",
-			jiaIsuUUID, timestamp, cond.IsSitting, cond.Condition, cond.Message)
+	go func() {
+		tx, err := db.Beginx()
 		if err != nil {
 			c.Logger().Errorf("db error: %v", err)
-			return c.NoContent(http.StatusInternalServerError)
+			return
+		}
+		defer tx.Rollback()
+
+		query := "INSERT INTO `isu_condition` (`jia_isu_uuid`, `timestamp`, `is_sitting`, `condition`, `message`) VALUES "
+		values := []interface{}{}
+		for _, cond := range req {
+			timestamp := time.Unix(cond.Timestamp, 0)
+			query += "(?, ?, ?, ?, ?),"
+			values = append(values, jiaIsuUUID, timestamp, cond.IsSitting, cond.Condition, cond.Message)
+		}
+		// Remove the trailing comma
+		query = query[:len(query)-1]
+
+		_, err = tx.Exec(query, values...)
+		if err != nil {
+			c.Logger().Errorf("db error: %v", err)
+			return
 		}
 
-	}
-
-	err = tx.Commit()
-	if err != nil {
-		c.Logger().Errorf("db error: %v", err)
-		return c.NoContent(http.StatusInternalServerError)
-	}
+		err = tx.Commit()
+		if err != nil {
+			c.Logger().Errorf("db error: %v", err)
+		}
+	}()
 
 	return c.NoContent(http.StatusAccepted)
 }
