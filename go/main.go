@@ -222,7 +222,7 @@ func initTrendResponseCache() {
 }
 
 func setTrendResponseCache(res []TrendResponse) {
-	exp := time.Now().UnixMilli() + 100
+	exp := time.Now().UnixMilli() + 900
 	v := trendResponseCacheValue{
 		exp: exp,
 		res: res,
@@ -1236,7 +1236,7 @@ func getTrend(c echo.Context) error {
 // ISUからのコンディションを受け取る
 func postIsuCondition(c echo.Context) error {
 	// TODO: 一定割合リクエストを落としてしのぐようにしたが、本来は全量さばけるようにすべき
-	dropProbability := 0.5
+	dropProbability := 0.1
 	if rand.Float64() <= dropProbability {
 		c.Logger().Warnf("drop post isu condition request")
 		return c.NoContent(http.StatusAccepted)
