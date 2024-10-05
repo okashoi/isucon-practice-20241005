@@ -221,7 +221,7 @@ func initTrendResponseCache() {
 }
 
 func setTrendResponseCache(res []TrendResponse) {
-	exp := time.Now().UnixMilli() + 100
+	exp := time.Now().UnixMilli() + 500
 	v := trendResponseCacheValue{
 		exp: exp,
 		res: res,
