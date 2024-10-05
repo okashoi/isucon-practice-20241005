@@ -5,10 +5,13 @@ gogo: stop-services build truncate-logs start-services
 stop-services:
 	sudo systemctl stop nginx
 	sudo systemctl stop isucondition.go.service
+	ssh isucon-s2 "sudo systemctl stop isucondition.go.service"
 	ssh isucon-s3 "sudo systemctl stop mysql"
 
 build:
 	$(MAKE) -C go
+	scp go/isucondition isucon-s2:webapp/go/
+
 
 truncate-logs:
 	sudo journalctl --vacuum-size=1K
@@ -19,6 +22,7 @@ truncate-logs:
 
 start-services:
 	ssh isucon-s3 "sudo systemctl start mysql"
+	ssh isucon-s2 "sudo systemctl start isucondition.go.service"
 	sudo systemctl start isucondition.go.service
 	sudo systemctl start nginx
 
