@@ -27,7 +27,7 @@ CREATE TABLE `isu_condition` (
       WHEN (LENGTH(`condition`) - LENGTH(REPLACE(`condition`, '=true', ''))) / LENGTH('=true') = 3 THEN 'Critical'
       ELSE 'Error'
     END
-  ) STORED,
+  ) STORED invisible,
   `condition` VARCHAR(255) NOT NULL,
   `message` VARCHAR(255) NOT NULL,
   `created_at` DATETIME(6) DEFAULT CURRENT_TIMESTAMP(6),
