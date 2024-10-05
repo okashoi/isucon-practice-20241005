@@ -122,7 +122,11 @@ name   = 'GET /isu/[\w-]+/graph'
 [[bundle]]
 regexp = '^GET /assets/'
 name = 'GET /assets/*'
-#
+
+[[bundle]]
+regexp = '^GET /\?jwt='
+name = 'GET /?jwt=*'
+
 #[[bundle]]
 #regexp = '^(GET|HEAD) /images/'
 #name = 'GET /images/*'
@@ -143,8 +147,8 @@ replace = '/<num>$1'
 regexp = '=[0-9]+(&|\s)'
 replace = '=<num>$1'
 #
-#[[replace]]
-#regexp = '\s+HTTP/[0-9.]+$'
-#replace = ''
+[[replace]]
+regexp = '\s+HTTP/[0-9.]+$'
+replace = ''
 
 ################################################################################
