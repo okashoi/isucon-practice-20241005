@@ -1092,8 +1092,8 @@ func getIsuConditionsFromDB(db *sqlx.DB, jiaIsuUUID string, endTime time.Time, c
 
 	// 結果を構築
 	conditionsResponse := []*GetIsuConditionResponse{}
+	i := 0
 	for _, c := range conditions {
-		// 条件レベルを計算して、適合する場合は結果に追加
 		cLevel, err := calculateConditionLevel(c.Condition)
 		if err != nil {
 			continue
@@ -1110,12 +1110,8 @@ func getIsuConditionsFromDB(db *sqlx.DB, jiaIsuUUID string, endTime time.Time, c
 				Message:        c.Message,
 			}
 			conditionsResponse = append(conditionsResponse, &data)
+			i++
 		}
-	}
-
-	// 結果の数を制限
-	if len(conditionsResponse) > limit {
-		conditionsResponse = conditionsResponse[:limit]
 	}
 
 	return conditionsResponse, nil
