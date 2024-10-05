@@ -16,6 +16,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/dgrijalva/jwt-go"
@@ -49,6 +50,7 @@ var (
 	db                  *sqlx.DB
 	sessionStore        sessions.Store
 	mySQLConnectionData *MySQLConnectionEnv
+	trendResponseCache  sync.Map
 
 	jiaJWTSigningKey *ecdsa.PublicKey
 
@@ -209,6 +211,37 @@ func init() {
 	}
 }
 
+type trendResponseCacheValue struct {
+	exp int64
+	res []TrendResponse
+}
+
+func initTrendResponseCache() {
+	trendResponseCache = sync.Map{}
+}
+
+func setTrendResponseCache(res []TrendResponse) {
+	exp := time.Now().UnixMilli() + 500
+	v := trendResponseCacheValue{
+		exp: exp,
+		res: res,
+	}
+	trendResponseCache.Store("a", v)
+}
+
+func getTrendResponseCache() ([]TrendResponse, bool) {
+	vraw, ok := trendResponseCache.Load("a")
+	if !ok {
+		return []TrendResponse{}, false
+	}
+	v := vraw.(trendResponseCacheValue)
+	if v.exp < time.Now().UnixMilli() {
+		return []TrendResponse{}, false
+	}
+
+	return v.res, true
+}
+
 func main() {
 	http.DefaultServeMux.Handle("/debug/fgprof", fgprof.Handler())
 	go func() {
@@ -260,6 +293,8 @@ func main() {
 		e.Logger.Fatalf("missing: POST_ISUCONDITION_TARGET_BASE_URL")
 		return
 	}
+
+	initTrendResponseCache()
 
 	serverPort := fmt.Sprintf(":%v", getEnv("SERVER_APP_PORT", "3000"))
 	e.Logger.Fatal(e.Start(serverPort))
@@ -1084,6 +1119,11 @@ func calculateConditionLevel(condition string) (string, error) {
 // GET /api/trend
 // ISUの性格毎の最新のコンディション情報
 func getTrend(c echo.Context) error {
+	cache, ok := getTrendResponseCache()
+	if ok {
+		return c.JSON(http.StatusOK, cache)
+	}
+
 	characterList := []Isu{}
 	err := db.Select(&characterList, "SELECT `character` FROM `isu` GROUP BY `character`")
 	if err != nil {
@@ -1110,7 +1150,7 @@ func getTrend(c echo.Context) error {
 		for _, isu := range isuList {
 			conditions := []IsuCondition{}
 			err = db.Select(&conditions,
-				"SELECT * FROM `isu_condition` WHERE `jia_isu_uuid` = ? ORDER BY timestamp DESC",
+				"SELECT * FROM `isu_condition` WHERE `jia_isu_uuid` = ? ORDER BY timestamp DESC LIMIT 1",
 				isu.JIAIsuUUID,
 			)
 			if err != nil {
@@ -1159,6 +1199,8 @@ func getTrend(c echo.Context) error {
 			})
 	}
 
+	setTrendResponseCache(res)
+
 	return c.JSON(http.StatusOK, res)
 }
 
@@ -1166,7 +1208,7 @@ func getTrend(c echo.Context) error {
 // ISUからのコンディションを受け取る
 func postIsuCondition(c echo.Context) error {
 	// TODO: 一定割合リクエストを落としてしのぐようにしたが、本来は全量さばけるようにすべき
-	dropProbability := 0.9
+	dropProbability := 0.5
 	if rand.Float64() <= dropProbability {
 		c.Logger().Warnf("drop post isu condition request")
 		return c.NoContent(http.StatusAccepted)
@@ -1185,15 +1227,8 @@ func postIsuCondition(c echo.Context) error {
 		return c.String(http.StatusBadRequest, "bad request body")
 	}
 
-	tx, err := db.Beginx()
-	if err != nil {
-		c.Logger().Errorf("db error: %v", err)
-		return c.NoContent(http.StatusInternalServerError)
-	}
-	defer tx.Rollback()
-
 	var count int
-	err = tx.Get(&count, "SELECT COUNT(*) FROM `isu` WHERE `jia_isu_uuid` = ?", jiaIsuUUID)
+	err = db.Get(&count, "SELECT COUNT(*) FROM `isu` WHERE `jia_isu_uuid` = ?", jiaIsuUUID)
 	if err != nil {
 		c.Logger().Errorf("db error: %v", err)
 		return c.NoContent(http.StatusInternalServerError)
@@ -1203,29 +1238,40 @@ func postIsuCondition(c echo.Context) error {
 	}
 
 	for _, cond := range req {
-		timestamp := time.Unix(cond.Timestamp, 0)
-
 		if !isValidConditionFormat(cond.Condition) {
 			return c.String(http.StatusBadRequest, "bad request body")
 		}
+	}
 
-		_, err = tx.Exec(
-			"INSERT INTO `isu_condition`"+
-				"	(`jia_isu_uuid`, `timestamp`, `is_sitting`, `condition`, `message`)"+
-				"	VALUES (?, ?, ?, ?, ?)",
-			jiaIsuUUID, timestamp, cond.IsSitting, cond.Condition, cond.Message)
+	go func() {
+		tx, err := db.Beginx()
 		if err != nil {
 			c.Logger().Errorf("db error: %v", err)
-			return c.NoContent(http.StatusInternalServerError)
+			return
+		}
+		defer tx.Rollback()
+
+		query := "INSERT INTO `isu_condition` (`jia_isu_uuid`, `timestamp`, `is_sitting`, `condition`, `message`) VALUES "
+		values := []interface{}{}
+		for _, cond := range req {
+			timestamp := time.Unix(cond.Timestamp, 0)
+			query += "(?, ?, ?, ?, ?),"
+			values = append(values, jiaIsuUUID, timestamp, cond.IsSitting, cond.Condition, cond.Message)
+		}
+		// Remove the trailing comma
+		query = query[:len(query)-1]
+
+		_, err = tx.Exec(query, values...)
+		if err != nil {
+			c.Logger().Errorf("db error: %v", err)
+			return
 		}
 
-	}
-
-	err = tx.Commit()
-	if err != nil {
-		c.Logger().Errorf("db error: %v", err)
-		return c.NoContent(http.StatusInternalServerError)
-	}
+		err = tx.Commit()
+		if err != nil {
+			c.Logger().Errorf("db error: %v", err)
+		}
+	}()
 
 	return c.NoContent(http.StatusAccepted)
 }
